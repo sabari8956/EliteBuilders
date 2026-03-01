@@ -6,12 +6,23 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "smoke": "tsx --env-file=.env.local scripts/smoke-test.ts",
+    "smoke:repo": "tsx --env-file=.env.local scripts/smoke-test.ts"
   },
   "dependencies": {
+    "@daytonaio/sdk": "^0.148.0",
+    "@langchain/core": "^1.1.29",
+    "@langchain/langgraph": "^1.2.0",
+    "@langchain/openai": "^1.2.11",
+    "@supabase/supabase-js": "^2.98.0",
+    "langsmith": "^0.5.7",
     "next": "16.1.6",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^20",
@@ -19,6 +30,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.0.18"
   }
 }

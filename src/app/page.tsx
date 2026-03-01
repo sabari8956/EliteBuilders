@@ -1,69 +1,110 @@
-export default function Home() {
-  return (
-    <main className="site-shell">
-      <div className="ambient ambient-left" />
-      <div className="ambient ambient-right" />
+"use client";
 
-      <section className="hero panel">
-        <div className="tagline">Elite Builders</div>
-        <h1>Built to last. Designed to impress.</h1>
+import Link from "next/link";
+import { useEffect, useState } from "react";
+
+type ProfilePayload = {
+  userId: string;
+  githubHandle: string;
+  role: "builder" | "sponsor" | "evaluator" | "admin";
+  profile: {
+    githubUrl: string;
+    portfolioUrl: string;
+    cvMetadata?: string;
+  } | null;
+};
+
+type ApiEnvelope<T> = {
+  data: T | null;
+  error: { code: string; message: string } | null;
+};
+
+export default function Home() {
+  const [profile, setProfile] = useState<ProfilePayload | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function load() {
+      const response = await fetch("/api/profile");
+      const payload = (await response.json()) as ApiEnvelope<ProfilePayload>;
+
+      if (!mounted) {
+        return;
+      }
+
+      if (response.ok && payload.data) {
+        setProfile(payload.data);
+      } else {
+        setProfile(null);
+      }
+
+      setLoading(false);
+    }
+
+    void load();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  async function signOut() {
+    await fetch("/api/auth/signout", { method: "POST" });
+    window.location.reload();
+  }
+
+  return (
+    <main className="site-shell" style={{ maxWidth: 980, margin: "0 auto", padding: "2.2rem 1rem" }}>
+      <section className="panel hero" style={{ padding: "1.5rem", gap: "1rem" }}>
+        <div className="tagline">100x Hackathon Platform</div>
+        <h1>GitHub OAuth, Role-Based Access, Challenge CRUD</h1>
         <p>
-          We shape luxury homes and commercial spaces with precise execution,
-          transparent timelines, and modern craftsmanship.
+          Epic 1 foundation is live with Supabase-backed APIs for profile onboarding,
+          challenge lifecycle management, and deterministic submissions.
         </p>
 
-        <div className="hero-actions">
-          <button className="btn btn-primary" type="button">
-            Request Estimate
-          </button>
-          <button className="btn btn-ghost" type="button">
-            View Projects
-          </button>
-        </div>
+        {loading ? <p>Loading session...</p> : null}
+
+        {!loading && !profile ? (
+          <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
+            <a className="btn btn-primary" href="/api/auth/github/start?role=builder">
+              Sign in with GitHub (Builder)
+            </a>
+            <a className="btn btn-ghost" href="/api/auth/github/start?role=sponsor">
+              Sign in with GitHub (Sponsor)
+            </a>
+          </div>
+        ) : null}
+
+        {!loading && profile ? (
+          <div className="panel" style={{ padding: "1rem", display: "grid", gap: "0.55rem" }}>
+            <p>
+              Signed in as <strong>{profile.githubHandle}</strong> ({profile.role})
+            </p>
+            <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
+              <Link className="btn btn-ghost" href="/onboarding">
+                Onboarding Profile
+              </Link>
+              {profile.role === "sponsor" || profile.role === "admin" ? (
+                <Link className="btn btn-primary" href="/sponsor/challenges">
+                  Sponsor Dashboard
+                </Link>
+              ) : null}
+              <button className="btn btn-ghost" type="button" onClick={() => void signOut()}>
+                Sign Out
+              </button>
+            </div>
+          </div>
+        ) : null}
       </section>
 
-      <section className="stats-grid">
-        <article className="panel stat-card">
-          <span>Projects Completed</span>
-          <strong>240+</strong>
-        </article>
-        <article className="panel stat-card">
-          <span>Client Satisfaction</span>
-          <strong>98%</strong>
-        </article>
-        <article className="panel stat-card">
-          <span>Years in Business</span>
-          <strong>14</strong>
-        </article>
-      </section>
-
-      <section className="services-grid">
-        <article className="panel service-card">
-          <h2>Custom Residences</h2>
-          <p>
-            End-to-end home construction with premium finishes and architectural
-            clarity.
-          </p>
-        </article>
-        <article className="panel service-card">
-          <h2>Commercial Fit-Outs</h2>
-          <p>
-            Scalable spaces engineered for brand presence, flow, and
-            performance.
-          </p>
-        </article>
-        <article className="panel service-card">
-          <h2>Renovation & Expansion</h2>
-          <p>
-            Precision upgrades that elevate existing structures without
-            disrupting your daily operations.
-          </p>
-        </article>
-      </section>
-
-      <section className="panel cta-banner">
-        <h2>Start your next signature project with Elite Builders.</h2>
-        <p>Consultations available this week for residential and commercial builds.</p>
+      <section className="panel" style={{ padding: "1.25rem", display: "grid", gap: "0.65rem" }}>
+        <h2>Core API Paths</h2>
+        <p>
+          <code>/api/profile</code>, <code>/api/challenges</code>, <code>/api/challenges/:id</code>,
+          <code>/api/challenges/:id/publish</code>, <code>/api/submissions</code>, <code>/api/submissions/:id</code>
+        </p>
       </section>
     </main>
   );

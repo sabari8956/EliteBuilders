@@ -124,6 +124,11 @@ p {
   transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
 }
 
+.btn,
+a.btn {
+  text-decoration: none;
+}
+
 .btn:hover {
   transform: translateY(-2px);
 }
@@ -191,6 +196,19 @@ p {
 .cta-banner h2 {
   font-size: clamp(1.25rem, 3vw, 2rem);
   max-width: 28ch;
+}
+
+input,
+textarea,
+select {
+  width: 100%;
+  margin-top: 0.35rem;
+  border: 1px solid rgba(15, 79, 92, 0.25);
+  border-radius: 10px;
+  padding: 0.55rem 0.65rem;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--ink);
+  font: inherit;
 }
 
 @keyframes drift {

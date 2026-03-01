@@ -1,3 +1,18 @@
+---
+workflowType: 'prd'
+workflow: 'edit'
+classification:
+  domain: 'General'
+  projectType: 'web_app'
+  complexity: 'Low'
+inputDocuments: []
+stepsCompleted: ['step-e-01-discovery', 'step-e-02-review', 'step-e-03-edit']
+lastEdited: '2026-03-01'
+editHistory:
+  - date: '2026-03-01'
+    changes: 'Added User Journeys, UX/UI requirements, refactored FRs and NFRs'
+---
+
 # EliteBuilders MVP PRD
 
 ## 1. Product Summary
@@ -48,6 +63,14 @@ Traditional coding challenge platforms evaluate algorithmic skill but do not cap
 4. Leaderboards transition from provisional to final without manual DB intervention.
 5. No sensitive secret leakage in builder-visible logs/prompts.
 
+### Hackathon Expectations (Pragmatic)
+
+1. Primary goal is a working end-to-end demo, not production hardening.
+2. Prefer simple, direct implementations over perfect architecture.
+3. Manual operational steps are acceptable if they unblock demo flow.
+4. Handle common happy paths first; edge cases can be documented and deferred.
+5. Success at hackathon stage means judges can complete one full sponsor->builder->evaluation->leaderboard journey reliably.
+
 ---
 
 ## 4. Users and Roles
@@ -90,6 +113,38 @@ Traditional coding challenge platforms evaluate algorithmic skill but do not cap
 
 ---
 
+## User Journeys
+
+### Builder Journey
+1. Builder logs in using GitHub authentication.
+2. Builder views the competition catalog and sees multiple active competitions.
+3. Builder selects a competition matching their proficiency.
+4. Builder reads the sponsor's problem statement and objective.
+5. Builder enters build mode, launching a Lovable-like UI.
+6. Builder completes the project in the workspace and submits.
+7. System kicks off the AI evaluator asynchronously.
+8. Evaluator completes AI evaluation and system routes submission to an evaluator.
+9. Evaluator completes human evaluation.
+10. Builder is assigned a final computed score and positioned on the leaderboard.
+
+### Sponsor Journey
+1. Sponsor creates a challenge with a rubric and problem statement.
+2. Sponsor views submissions and leaderboards once builders complete submissions.
+
+### Evaluator Journey
+1. Evaluator receives AI-evaluated submissions.
+2. Evaluator reviews the generated report and assigns a human score.
+
+---
+
+## UX/UI & Responsive Design Requirements
+
+- Builders can operate the IDE in a browser interface that mimics a Lovable-like UI.
+- The platform functions effectively across common desktop browser viewport dimensions.
+- Mobile viewports are intentionally unsupported for the build/IDE mode, but viewable for challenge catalog and leaderboards.
+
+---
+
 ## 6. High-Level Architecture
 
 ```text
@@ -120,156 +175,127 @@ Traditional coding challenge platforms evaluate algorithmic skill but do not cap
 
 ## 7. Functional Requirements
 
-## 7.1 Challenge Catalog and Management
+### 7.1 Challenge Catalog and Management
+1. Sponsors can specify a brief markdown, rubric JSON, dataset assets, deadline, and prize metadata when creating a challenge. (Traces to: Sponsor Journey)
+2. Sponsors can create, edit, publish, and archive challenges. (Traces to: Sponsor Journey)
+3. Builders can filter active challenges by status, sponsor, category, deadline, and prize range. (Traces to: Builder Journey)
 
-1. Sponsors can create/edit/publish/archive challenges.
-2. Challenge includes:
-   - brief markdown
-   - rubric JSON
-   - dataset assets
-   - deadline
-   - prize metadata
-3. Builders can filter by status, sponsor, category, deadline, prize range.
+### 7.2 Onboarding and Identity
+1. Builders can authenticate using third party identity providers natively. (Traces to: Builder Journey)
+2. Builders can provide a GitHub profile, portfolio URL, and CV upload during onboarding. (Traces to: Builder Journey)
+3. Admins can enforce role-based access controls for builder, sponsor, evaluator, and admin actions. (Traces to: General Access)
 
-## 7.2 Onboarding and Identity
+### 7.3 In-Browser IDE
+1. Builders can launch into a pre-seeded builder workspace directly from a selected challenge. (Traces to: Builder Journey)
+2. Builders can write code via an embedded browser IDE interface. (Traces to: Builder Journey)
+3. Builders can freeze their workspace and submit a snapshot alongside their submission record to enter the evaluation queue. (Traces to: Builder Journey)
 
-1. OAuth with GitHub and Google via Supabase Auth.
-2. Builder onboarding captures:
-   - GitHub profile
-   - portfolio URL
-   - CV upload
-3. Role-based access controls for builder/sponsor/evaluator/admin.
+### 7.4 Submission Pipeline
+1. Builders can view real-time phase-level status and timestamps of their submission pipeline. (Traces to: Builder Journey)
+2. System can process submission state transitions from draft through finalized or failed. (Traces to: AI Eval process)
+3. Evaluators can transition submissions needing rework back to the builder with notes. (Traces to: Evaluator Journey)
+4. Admins can manually disqualify any non-final submission state. (Traces to: General Access)
 
-## 7.3 In-Browser IDE
+### 7.5 AI Evaluation
+1. System can execute a submitted snapshot within an isolated evaluation environment. (Traces to: AI Eval process)
+2. System uses a lean graph-orchestrated multi-agent flow with specialized node goals (Intake/Validation, Sandbox/Clone, Analysis/Planning, Unit Test Execution, Runtime Execution, Scoring/Report, Cleanup). (Traces to: AI Eval process)
+3. System can persist specialist outputs as structured evaluation evidence. (Traces to: AI Eval process)
+4. System can detect missing unit tests and generate project-specific tests in sandbox before execution. (Traces to: AI Eval process)
+5. System can run browser E2E and API checks based on inferred runtime path. (Traces to: AI Eval process)
+6. System can record runtime validation artifacts (Playwright trace/video/screenshots and Daytona recording metadata) and include them in evaluator reports. (Traces to: AI Eval process)
+7. System can compute an AI score mapped against the challenge rubric. (Traces to: AI Eval process)
+8. System can generate a full redacted report with logs, prompts, and runtime artifacts. (Traces to: AI Eval process)
 
-1. Create/resume Daytona workspace for each builder-challenge pair.
-2. Pre-seed workspace with challenge assets/boilerplate.
-3. Browser IDE embed (VS Code server/OpenVSX compatible flow).
-4. Submit from IDE:
-   - freeze workspace
-   - snapshot source state
-   - create submission record
-   - enqueue evaluation job
+### 7.6 Human Evaluation
+1. Evaluators can view an AI-generated report, rubric breakdown, and raw artifacts for any given submission. (Traces to: Evaluator Journey)
+2. Evaluators can assign a human score and input written notes into the submission record. (Traces to: Evaluator Journey)
+3. System can compute a final score composed of weighted AI and human scores. (Traces to: AI Eval process)
 
-## 7.4 Submission Pipeline
+### 7.7 Leaderboards and Career Score
+1. Users can view a provisional leaderboard populated natively after AI scoring. (Traces to: Builder/Sponsor Journey)
+2. Users can view a final leaderboard published automatically post-human review. (Traces to: Builder/Sponsor Journey)
+3. System can update season-level career scores on builder profiles upon finalized submissions. (Traces to: Builder Journey)
 
-1. Submission includes repo URL or workspace snapshot plus optional deck/video links.
-2. Submission state machine:
-   - `draft`
-   - `submitted`
-   - `queued`
-   - `running`
-   - `ai_scored`
-   - `human_review`
-   - `finalized`
-   - `failed`
-3. Builders can view phase-level status and timestamps.
-
-## 7.5 AI Evaluation (Dynamic Multi-Agent)
-
-1. Submission is executed in isolated Daytona eval workspace.
-2. Planner agent dynamically composes specialist pipeline.
-3. Specialist outputs are persisted as structured evidence.
-4. AI score is computed against challenge rubric.
-5. Full report is generated with logs/prompts/screenshots and safety redaction.
-
-## 7.6 Human Evaluation
-
-1. All submissions require evaluator review in MVP.
-2. Evaluators receive AI report + rubric breakdown + artifacts.
-3. Evaluator assigns human score and notes.
-4. Final score formula:
-   - `final_score = 0.8 * ai_score + 0.2 * human_score`
-
-## 7.7 Leaderboards and Career Score
-
-1. Provisional leaderboard published after AI score.
-2. Final leaderboard published after human review.
-3. Season-level career score updates on each finalized submission.
-
-## 7.8 Badges and Notifications
-
-1. Auto badge issuance:
-   - Top-10%
-   - Category Winner
-   - Sponsor Favorite
-2. Notification channels:
-   - email
-   - in-app
-3. Trigger events:
-   - submission queued/running/scored
-   - human review completed
-   - leaderboard rank change
-   - badge awarded
+### 7.8 Badges and Notifications
+1. System can automatically issue badges corresponding to submission outcomes (Top 10%, Category Winner, Sponsor Favorite). (Traces to: Builder Journey)
+2. Users can receive notifications via email and in-app channels. (Traces to: General Updates)
+3. System can trigger notifications upon key state changes (queued, human review completed, leaderboard rank shift, badge unlocked). (Traces to: Builder Journey)
 
 ---
 
-## 8. Multi-Agent Evaluation Specification
+## 8. Multi-Agent Evaluation Specification (Course Correction 2026-03-02)
 
-## 8.1 Agent Roles
+This section supersedes the earlier fine-grained specialist model with a lean, implementation-first graph aligned to the approved workflow diagram.
 
-1. PlannerAgent
-2. RepoProfilerAgent
-3. BootAgent
-4. FunctionalTestAgent
-5. SecurityProbeAgent
-6. CodeQualityAgent
-7. RubricScoringAgent
-8. ReportAgent
+## 8.1 Agent Roles (Grouped)
 
-## 8.2 Planner Behavior
+1. `IntakeValidationAgent`
+   - Intake + payload validation + repo/rubric pre-checks.
+2. `SandboxSetupAgent`
+   - Daytona sandbox create + repo clone + commit lock.
+3. `AnalysisPlanningAgent` (LLM-first)
+   - Deep codebase understanding, project type classification, runtime path decision, and execution plan synthesis.
+4. `UnitTestExecutionAgent`
+   - Test gap analysis, test generation (if missing), unit test execution, test quality evaluation.
+5. `RuntimeExecutionAgent`
+   - Runtime branch execution (`frontend/fullstack-ui`, `backend/api`, or `both`), Playwright E2E, API checks, and recording artifact collection.
+6. `ScoringReportingAgent`
+   - Rubric scoring from validated evidence + evaluator/builder report generation.
+7. `CleanupAgent`
+   - Always-run sandbox cleanup and final run closure.
 
-1. Reads challenge rubric and submission metadata.
-2. Profiles repository stack and confidence level.
-3. Produces execution DAG (ordered specialist tasks, budgets, fallback rules).
-4. Persists plan artifact for auditability and replay.
+## 8.2 Graph Flow
 
-## 8.3 Specialist Contract
+1. `IntakeValidationAgent`
+2. `SandboxSetupAgent`
+3. `AnalysisPlanningAgent`
+4. `UnitTestExecutionAgent`
+5. `RuntimeExecutionAgent`
+6. `ScoringReportingAgent`
+7. `CleanupAgent` (always)
 
-Every specialist returns:
+Error rule: any node failure routes directly to `CleanupAgent` before terminal response.
 
-- `status`: `pass | partial | fail`
-- `metrics`: numeric KPIs relevant to phase
-- `evidence_refs`: links to artifacts/logs
-- `score_deltas`: criterion-level impacts
-- `retryable`: boolean
-- `blockers`: machine-readable codes/messages
+## 8.3 Agent Output Contract
 
-## 8.4 Evaluation Phases
+Every node returns:
 
-1. Understand
-   - file tree, docs, stack detection
-2. Boot
-   - install/start/health check
-3. Functional Test
-   - rubric-aligned Playwright scenario generation and execution
-4. Security Probe
-   - prompt-injection, fuzzing, XSS/path traversal checks
-5. Code Quality
-   - lint/style/structure heuristics
-6. Score
-   - rubric mapping and weighted AI score
-7. Report
-   - builder-facing and internal evaluator report variants
+- `status`: `success | failed | skipped`
+- `summary`: short human-readable outcome
+- `evidence_refs`: artifact pointers (logs, files, traces, videos)
+- `metrics`: node-specific metrics (duration, pass/fail counts, coverage/confidence)
+- `next_hint`: optional routing guidance for downstream node
+
+## 8.4 Mandatory Behaviors
+
+1. LLM-first analysis is required for project understanding and runtime planning.
+2. If the project lacks adequate tests, the system must generate missing unit tests in sandbox and run them.
+3. Runtime validation must choose path based on inferred app shape:
+   - `frontend/fullstack-ui` -> Playwright E2E (+ API checks)
+   - `backend/api` -> API checks
+   - `both` -> Playwright E2E + API checks
+4. Runtime execution must capture artifacts:
+   - Playwright trace/video/screenshots
+   - Daytona recording metadata when recording is enabled for runtime phases
+5. Score must be based on evidence-backed rubric mapping only.
 
 ## 8.5 Time Budget
 
 - Total hard cap: 15 minutes per submission
 - Default allocation:
-  - understand/profile: 1 min
-  - boot/install: 4 min
-  - functional: 5 min
-  - security: 3 min
-  - quality/scoring/report: 2 min
-- Planner may reallocate within the hard cap.
+  - intake + setup: 2 min
+  - analysis/planning: 2 min
+  - unit tests (including generated tests): 4 min
+  - runtime execution (E2E/API): 5 min
+  - scoring/reporting: 2 min
+- Orchestrator may reallocate while honoring total hard cap.
 
 ## 8.6 Failure Policy
 
-If app cannot be fully booted:
-
-1. Assign partial score (infra/readiness penalties only where applicable).
-2. Mark unresolved boot evidence with blocker codes.
-3. Issue one retry window token (expires at earlier of challenge deadline or +6h).
+1. Failures in analysis/runtime/testing do not skip cleanup.
+2. Partial evidence is preserved and surfaced with blocker codes.
+3. Scoring can return partial with explicit confidence penalties when critical runtime checks fail.
+4. Retry policy remains bounded and deterministic (default max attempts: 3).
 
 ---
 
@@ -298,6 +324,8 @@ If app cannot be fully booted:
 - Queue leasing fields (`lease_until`, `attempts`, `max_attempts`).
 - Score versioning (`scoring_version`) for reproducibility.
 - Artifact/log references in phase results.
+- Generated test artifact references and patch metadata.
+- Playwright runtime artifacts (`trace`, `video`, `screenshots`) and Daytona recording metadata.
 
 ---
 
@@ -353,15 +381,10 @@ If app cannot be fully booted:
 
 ## 13. Non-Functional Requirements
 
-1. Evaluation performance:
-   - P95 <= 15 min for supported stacks
-2. API performance:
-   - report/status retrieval <= 2s for completed runs
-3. Reliability:
-   - queue recovery after worker crash without data loss
-4. Observability:
-   - LangSmith trace id linked to each run
-   - structured logs for all phase transitions
+1. **Evaluation Performance:** The system shall complete automated AI evaluations in under 15 minutes for the 95th percentile of submissions, as measured by internal execution telemetry, to ensure rapid builder feedback.
+2. **API Performance:** The system shall respond to report/status retrieval requests in under 2 seconds for completed runs, as measured by server APM monitoring, to deliver a snappy user experience.
+3. **Reliability:** The system shall guarantee zero data loss of queue events during worker crashes, as measured by database transaction integrity logs, to ensure builder submissions are never silently dropped.
+4. **Observability:** The system shall attach a unique execution trace ID to 100% of pipeline runs and structured logs to every phase transition, as measured by log aggregation queries, to enable deterministic evaluator auditing.
 
 ---
 
@@ -378,8 +401,9 @@ If app cannot be fully booted:
 
 1. Submission lifecycle transitions end-to-end.
 2. Daytona workspace create/freeze/restore.
-3. Planner-specialist contract and evidence persistence.
-4. Partial boot failure and retry token issuance.
+3. AnalysisPlanningAgent output contract and evidence persistence.
+4. Generated unit test execution path when project coverage is sparse.
+5. Runtime path branch selection (`ui`, `api`, `both`) and artifact persistence.
 
 ## E2E Tests
 
@@ -434,4 +458,3 @@ If app cannot be fully booted:
 6. Human review mandatory for final rank publication.
 7. Builder-visible report includes logs/prompts after redaction.
 8. Queue stack remains Supabase Postgres in MVP.
-

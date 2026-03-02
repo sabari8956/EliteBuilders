@@ -1,5 +1,5 @@
 import type { User } from "../platform/store";
-import { createSubmission as createLocalSubmission, getSubmission as getLocalSubmission } from "./service";
+import { createSubmission as createLocalSubmission, getSubmission as getLocalSubmission, listSubmissions as listLocalSubmissions } from "./service";
 import { getSupabaseServerClient, isSupabaseConfigured } from "../platform/supabase";
 import { isSupabaseSchemaMissingError } from "../platform/supabase-errors";
 
@@ -97,6 +97,33 @@ export async function createSubmissionRecord(
   }
 
   return { submission: mapRow(data) };
+}
+
+export async function listSubmissionRecords(filters: { builderId?: string; challengeId?: string; status?: SubmissionRow["status"] }): Promise<SubmissionRecord[]> {
+  if (!isSupabaseConfigured()) {
+    return listLocalSubmissions(filters) as SubmissionRecord[];
+  }
+
+  const supabase = getSupabaseServerClient();
+  let query = supabase
+    .from("submissions")
+    .select("id,challenge_id,builder_id,snapshot_ref,status,created_at,updated_at")
+    .order("created_at", { ascending: false });
+
+  if (filters.builderId) query = query.eq("builder_id", filters.builderId);
+  if (filters.challengeId) query = query.eq("challenge_id", filters.challengeId);
+  if (filters.status) query = query.eq("status", filters.status);
+
+  const { data, error } = await query.returns<SubmissionRow[]>();
+
+  if (error) {
+    if (isSupabaseSchemaMissingError(error)) {
+      return listLocalSubmissions(filters) as SubmissionRecord[];
+    }
+    throw error;
+  }
+
+  return (data ?? []).map(mapRow);
 }
 
 export async function getSubmissionRecord(id: string): Promise<SubmissionRecord | null> {

@@ -254,20 +254,20 @@ export async function runRepoIntake(rawInput: unknown): Promise<RepoIntakeResult
   const envVars = input.env_vars ?? {};
   const createParams = snapshot
     ? {
-        snapshot,
-        language: "javascript",
-        autoStopInterval: 10,
-        autoDeleteInterval: 0,
-        labels,
-        envVars,
-      }
+      snapshot,
+      language: "javascript",
+      autoStopInterval: 10,
+      autoDeleteInterval: 0,
+      labels,
+      envVars,
+    }
     : {
-        language: "javascript",
-        autoStopInterval: 10,
-        autoDeleteInterval: 0,
-        labels,
-        envVars,
-      };
+      language: "javascript",
+      autoStopInterval: 10,
+      autoDeleteInterval: 0,
+      labels,
+      envVars,
+    };
 
   const steps: IntakeStepResult[] = [
     { step: "ValidateInput", status: "success", message: "Input validated." },
@@ -282,15 +282,30 @@ export async function runRepoIntake(rawInput: unknown): Promise<RepoIntakeResult
       message: `Sandbox ${sandbox.id} created.`,
     });
 
-    const branchPart = input.branch ? ` --branch ${escapeShell(input.branch)} ` : " ";
-    const cloneCommand = `git clone --depth 1${branchPart}${escapeShell(input.repo_url)} repo`;
-
-    const cloneResult = await sandbox.process.executeCommand(
-      cloneCommand,
+    let cloneResult = await sandbox.process.executeCommand(
+      `git clone --depth 1${input.branch ? ` --branch ${escapeShell(input.branch)}` : " --branch main"} ${escapeShell(input.repo_url)} repo`,
       undefined,
       undefined,
       120,
     );
+
+    if (cloneResult.exitCode !== 0 && !input.branch) {
+      cloneResult = await sandbox.process.executeCommand(
+        `git clone --depth 1 --branch master ${escapeShell(input.repo_url)} repo`,
+        undefined,
+        undefined,
+        120,
+      );
+
+      if (cloneResult.exitCode !== 0) {
+        cloneResult = await sandbox.process.executeCommand(
+          `git clone --depth 1 ${escapeShell(input.repo_url)} repo`,
+          undefined,
+          undefined,
+          120,
+        );
+      }
+    }
 
     if (cloneResult.exitCode !== 0) {
       steps.push({

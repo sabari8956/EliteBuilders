@@ -60,6 +60,10 @@ type EvaluationStateType = {
   phase_results: EvaluationPhaseResult[];
   failure_reason: string | null;
   should_stop: boolean;
+  /** Base64-encoded JPEG screenshot captured during runtime evaluation. */
+  screenshot_base64: string | null;
+  /** Public preview URL captured during runtime evaluation. */
+  preview_url: string | null;
 };
 
 const EvaluationState = Annotation.Root({
@@ -80,6 +84,8 @@ const EvaluationState = Annotation.Root({
   }),
   failure_reason: Annotation<string | null>(),
   should_stop: Annotation<boolean>(),
+  screenshot_base64: Annotation<string | null>(),
+  preview_url: Annotation<string | null>(),
 });
 
 const sandboxRegistry = new Map<string, EvalSandbox>();
@@ -92,7 +98,7 @@ function registerExitHandlers(): void {
     try {
       const daytona = createDaytonaClient();
       for (const [runId, sandbox] of sandboxRegistry) {
-        daytona.delete(sandbox, 5).catch(() => {});
+        daytona.delete(sandbox, 5).catch(() => { });
         sandboxRegistry.delete(runId);
       }
     } catch {
@@ -261,6 +267,7 @@ async function executeAgent(
   fn: () => Promise<{ contract: AgentOutputContract; update?: Partial<EvaluationStateType> }>,
 ): Promise<Partial<EvaluationStateType>> {
   const startedAt = nowIso();
+  console.log(`[Eval:${state.run_id}] ⏳ Starting phase: ${agent}...`);
 
   try {
     const result = await fn();
@@ -273,6 +280,12 @@ async function executeAgent(
         ? update.failure_reason ?? contract.summary
         : update.failure_reason ?? state.failure_reason;
 
+    if (contract.status === "failed" || update.should_stop) {
+      console.warn(`[Eval:${state.run_id}] ⚠️ Phase ${agent} stopped/failed: ${failureReason}`);
+    } else {
+      console.log(`[Eval:${state.run_id}] ✅ Phase ${agent} completed successfully.`);
+    }
+
     return {
       ...update,
       should_stop: shouldStop,
@@ -282,6 +295,8 @@ async function executeAgent(
   } catch (error) {
     const message =
       error instanceof Error ? error.message : `Unknown ${agent} failure during evaluation.`;
+
+    console.error(`[Eval:${state.run_id}] ❌ Phase ${agent} threw an error:`, error);
 
     return {
       should_stop: true,
@@ -357,20 +372,20 @@ const sandboxSetupAgent = traceable(
       const snapshot = process.env.DAYTONA_EVAL_SNAPSHOT;
       const createParams = snapshot
         ? {
-            snapshot,
-            language: "javascript",
-            autoStopInterval: 10,
-            autoDeleteInterval: 0,
-            labels,
-            envVars,
-          }
+          snapshot,
+          language: "javascript",
+          autoStopInterval: 10,
+          autoDeleteInterval: 0,
+          labels,
+          envVars,
+        }
         : {
-            language: "javascript",
-            autoStopInterval: 10,
-            autoDeleteInterval: 0,
-            labels,
-            envVars,
-          };
+          language: "javascript",
+          autoStopInterval: 10,
+          autoDeleteInterval: 0,
+          labels,
+          envVars,
+        };
 
       const sandbox = await daytona.create(createParams, { timeout: createTimeoutSeconds });
       const sandboxId =
@@ -380,17 +395,32 @@ const sandboxSetupAgent = traceable(
 
       sandboxRegistry.set(state.run_id, sandbox);
 
-      const branchPart = state.intake_input.branch
-        ? ` --branch ${escapeShell(state.intake_input.branch)} `
-        : " ";
-      const cloneCommand = `git clone --depth 1${branchPart}${escapeShell(state.intake_input.repo_url)} repo`;
-
-      const cloneResult = await sandbox.process.executeCommand(
-        cloneCommand,
+      let cloneResult = await sandbox.process.executeCommand(
+        `git clone --depth 1${state.intake_input.branch ? ` --branch ${escapeShell(state.intake_input.branch)}` : " --branch main"} ${escapeShell(state.intake_input.repo_url)} repo`,
         undefined,
         undefined,
         180,
       );
+
+      // If explicit branch isn't provided and 'main' fails, try 'master'
+      if (cloneResult.exitCode !== 0 && !state.intake_input.branch) {
+        cloneResult = await sandbox.process.executeCommand(
+          `git clone --depth 1 --branch master ${escapeShell(state.intake_input.repo_url)} repo`,
+          undefined,
+          undefined,
+          180,
+        );
+
+        // If 'master' also fails, try with no target branch at all
+        if (cloneResult.exitCode !== 0) {
+          cloneResult = await sandbox.process.executeCommand(
+            `git clone --depth 1 ${escapeShell(state.intake_input.repo_url)} repo`,
+            undefined,
+            undefined,
+            180,
+          );
+        }
+      }
 
       if (cloneResult.exitCode !== 0) {
         return {
@@ -571,9 +601,9 @@ const unitTestExecutionAgent = traceable(
         messages: [
           new HumanMessage(
             `Run unit tests for repo at ./repo\n` +
-              `Type: ${state.llm_analysis.project_type}\n` +
-              `Frameworks: ${state.llm_analysis.frameworks.join(", ")}\n` +
-              `Suggested command: ${state.llm_analysis.recommended_unit_test_command}`,
+            `Type: ${state.llm_analysis.project_type}\n` +
+            `Frameworks: ${state.llm_analysis.frameworks.join(", ")}\n` +
+            `Suggested command: ${state.llm_analysis.recommended_unit_test_command}`,
           ),
         ],
       };
@@ -676,18 +706,38 @@ const runtimeExecutionAgent = traceable(
         messages: [
           new HumanMessage(
             `Run runtime checks. Path: ${runtimePath}\n` +
-              `Frameworks: ${state.llm_analysis.frameworks.join(", ")}\n` +
-              `Unit test status: ${state.unit_test_result?.status ?? "unknown"}`,
+            `Frameworks: ${state.llm_analysis.frameworks.join(", ")}\n` +
+            `Unit test status: ${state.unit_test_result?.status ?? "unknown"}`,
           ),
         ],
       };
 
       let out: z.infer<typeof runtimeAgentSchema> | undefined;
       let lastRuntimeError: unknown;
+      let capturedScreenshotBase64: string | null = null;
+      let capturedPreviewUrl: string | null = null;
+
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
           const result = await agent.invoke(runtimeAgentInput, { recursionLimit: 50 });
           out = runtimeAgentSchema.parse(result.structuredResponse);
+
+          // Extract base64 screenshot from tool messages (DATA_BASE64:<b64>|SUCCESS:...)
+          const allMessages: unknown[] = result.messages ?? [];
+          for (const msg of allMessages) {
+            const content = (msg as { content?: unknown }).content;
+            const text = typeof content === "string" ? content : JSON.stringify(content ?? "");
+            const match = /DATA_BASE64:([A-Za-z0-9+/=]+)\|/.exec(text);
+            if (match?.[1] && match[1].length > 100) {
+              capturedScreenshotBase64 = match[1];
+            }
+          }
+
+          // Capture preview URL from agent output
+          if (out.preview_url) {
+            capturedPreviewUrl = out.preview_url;
+          }
+
           break;
         } catch (err) {
           lastRuntimeError = err;
@@ -709,11 +759,11 @@ const runtimeExecutionAgent = traceable(
           artifacts: [
             ...(c.kind === "playwright"
               ? [
-                  `playwright://trace/${state.run_id}.zip`,
-                  `playwright://screenshot/${state.run_id}.png`,
-                ]
+                `playwright://trace/${state.run_id}.zip`,
+                `playwright://screenshot/${state.run_id}.png`,
+              ]
               : c.kind === "http-smoke"
-                ? [out.preview_url ? `preview://${out.preview_url}` : `http-smoke://result.json`]
+                ? [out!.preview_url ? `preview://${out!.preview_url}` : `http-smoke://result.json`]
                 : [`api-check://result.json`]),
           ],
         })),
@@ -722,7 +772,7 @@ const runtimeExecutionAgent = traceable(
 
       const evidenceRefs = [
         ...runtimeSummary.checks.flatMap((c) => c.artifacts),
-        ...(out.preview_url ? [`preview-url:${out.preview_url}`] : []),
+        ...(capturedPreviewUrl ? [`preview-url:${capturedPreviewUrl}`] : []),
         ...(out.screenshot_taken ? [`screenshot://daytona/${state.run_id}.jpeg`] : []),
       ];
 
@@ -732,10 +782,14 @@ const runtimeExecutionAgent = traceable(
           "success",
           out.summary,
           evidenceRefs,
-          { runtime_path: runtimePath, failed_checks: failedChecks },
+          { runtime_path: runtimePath, failed_checks: failedChecks, screenshot_captured: Boolean(capturedScreenshotBase64) },
           "Proceed to scoring.",
         ),
-        update: { runtime: runtimeSummary },
+        update: {
+          runtime: runtimeSummary,
+          screenshot_base64: capturedScreenshotBase64,
+          preview_url: capturedPreviewUrl,
+        },
       };
     }),
   {
@@ -764,21 +818,21 @@ const scoringReportingAgent = traceable(
         frameworks: state.llm_analysis.frameworks,
         unit_test: state.unit_test_result
           ? {
-              status: state.unit_test_result.status,
-              command: state.unit_test_result.command,
-              output: state.unit_test_result.output.slice(0, 2000),
-              exit_code: state.unit_test_result.exit_code,
-            }
+            status: state.unit_test_result.status,
+            command: state.unit_test_result.command,
+            output: state.unit_test_result.output.slice(0, 2000),
+            exit_code: state.unit_test_result.exit_code,
+          }
           : null,
         runtime: state.runtime
           ? {
-              runtime_path: state.runtime.runtime_path,
-              checks: state.runtime.checks.map((c) => ({
-                kind: c.kind,
-                status: c.status,
-                output: c.output.slice(0, 1000),
-              })),
-            }
+            runtime_path: state.runtime.runtime_path,
+            checks: state.runtime.checks.map((c) => ({
+              kind: c.kind,
+              status: c.status,
+              output: c.output.slice(0, 1000),
+            })),
+          }
           : null,
       });
 
@@ -795,10 +849,10 @@ const scoringReportingAgent = traceable(
       const messages = [
         new SystemMessage(
           "You are ScoringReportingAgent. Score each rubric criterion based on the evaluation evidence. " +
-            "Be fair but critical. Use the evidence to justify scores. " +
-            "raw_score must be between 0 and the criterion's max_score. " +
-            "weighted_score = raw_score * weight. " +
-            "aggregate_score = sum of all weighted_scores.",
+          "Be fair but critical. Use the evidence to justify scores. " +
+          "raw_score must be between 0 and the criterion's max_score. " +
+          "weighted_score = raw_score * weight. " +
+          "aggregate_score = sum of all weighted_scores.",
         ),
         new HumanMessage(
           `Rubric criteria:\n${rubricContext}\n\nEvaluation evidence:\n${evidenceContext}`,
@@ -894,6 +948,8 @@ const scoringReportingAgent = traceable(
         phase_results: state.phase_results,
         runtime_artifacts: runtimeArtifacts,
         runtime: state.runtime ?? undefined,
+        screenshot_base64: state.screenshot_base64 ?? null,
+        preview_url: state.preview_url ?? null,
       };
 
       const report = buildReport(evidence);
@@ -1047,14 +1103,34 @@ const tracedEvaluationRun = traceable(
       phase_results: [],
       failure_reason: null,
       should_stop: false,
+      screenshot_base64: null,
+      preview_url: null,
     };
 
-    const finalState = await evaluationGraph.invoke(initialState);
+    let finalState: typeof initialState;
+    try {
+      finalState = await evaluationGraph.invoke(initialState);
+    } catch (graphErr) {
+      // Safety net: CleanupAgent may not have run if the graph framework itself threw.
+      const leakedSandbox = sandboxRegistry.get(initialState.run_id);
+      if (leakedSandbox) {
+        sandboxRegistry.delete(initialState.run_id);
+        try {
+          const daytona = createDaytonaClient();
+          await daytona.delete(leakedSandbox, 30);
+          console.warn(`[CleanupSafetyNet] Force-deleted sandbox for run ${initialState.run_id}.`);
+        } catch (cleanupErr) {
+          console.error(`[CleanupSafetyNet] Failed to delete sandbox for run ${initialState.run_id}:`, cleanupErr);
+        }
+      }
+      throw graphErr;
+    }
+
 
     if (!finalState.evidence || !finalState.report) {
       throw new Error(
         finalState.failure_reason ??
-          "Evaluation graph finished without scoring/report outputs.",
+        "Evaluation graph finished without scoring/report outputs.",
       );
     }
 
@@ -1095,6 +1171,8 @@ export function buildEvaluationInitialState(
     phase_results: [],
     failure_reason: null,
     should_stop: false,
+    screenshot_base64: null,
+    preview_url: null,
   };
 }
 

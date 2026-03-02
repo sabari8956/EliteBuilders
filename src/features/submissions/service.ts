@@ -1,4 +1,4 @@
-import { getStore, nextId, nowIso, type Submission } from "../platform/store";
+import { getStore, nextId, nowIso, type Submission, type SubmissionStatus } from "../platform/store";
 import type { User } from "../platform/store";
 
 export function createSubmission(input: { challengeId: string; snapshotRef: string }, builder: User): { submission?: Submission; error?: string } {
@@ -27,4 +27,14 @@ export function createSubmission(input: { challengeId: string; snapshotRef: stri
 
 export function getSubmission(id: string): Submission | null {
   return getStore().submissions.get(id) ?? null;
+}
+
+export function listSubmissions(filters: { builderId?: string; challengeId?: string; status?: SubmissionStatus }): Submission[] {
+  const all = Array.from(getStore().submissions.values());
+  return all.filter((s) => {
+    if (filters.builderId && s.builderId !== filters.builderId) return false;
+    if (filters.challengeId && s.challengeId !== filters.challengeId) return false;
+    if (filters.status && s.status !== filters.status) return false;
+    return true;
+  });
 }

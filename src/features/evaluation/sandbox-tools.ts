@@ -157,7 +157,17 @@ console.log('WRITTEN:' + ${JSON.stringify(safe)});
           scale: 0.5,
         });
         const sizeKb = Math.round((result.sizeBytes ?? 0) / 1024);
-        return `SUCCESS: Screenshot captured (${sizeKb}KB JPEG). The display is running and rendering content.`;
+        // Encode raw bytes to base64 so the evaluator can persist the image.
+        // Result data may be a Buffer, Uint8Array, or base64 string depending on SDK version.
+        let base64 = "";
+        const raw = (result as { data?: unknown }).data;
+        if (typeof raw === "string") {
+          base64 = raw;
+        } else if (raw instanceof Buffer || raw instanceof Uint8Array) {
+          base64 = Buffer.from(raw).toString("base64");
+        }
+        const prefix = base64 ? `DATA_BASE64:${base64}|` : "";
+        return `${prefix}SUCCESS: Screenshot captured (${sizeKb}KB JPEG). The display is running and rendering content.`;
       } catch (err) {
         return `ERROR taking screenshot: ${err instanceof Error ? err.message : String(err)}. ` +
           `Make sure start_display was called first.`;
@@ -168,7 +178,7 @@ console.log('WRITTEN:' + ${JSON.stringify(safe)});
       description:
         "Take a compressed screenshot of the sandbox display. " +
         "Use after start_display and after launching a browser or app to visually verify it is rendering. " +
-        "Returns size in KB — non-zero size confirms the display is active.",
+        "Returns DATA_BASE64:<base64>|SUCCESS: ... when successful — non-zero size confirms the display is active.",
       schema: z.object({}),
     },
   );

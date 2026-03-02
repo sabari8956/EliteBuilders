@@ -1,73 +1,75 @@
 "use client";
 
+import { motion, AnimatePresence } from "framer-motion";
 import { FormEvent, useState } from "react";
+import { btnTap, fadeIn, pageIn } from "../components/animations";
 
-type SaveState = {
-  status: "idle" | "saving" | "saved" | "error";
-  message?: string;
-};
+type SaveState = { status: "idle" | "saving" | "saved" | "error"; message?: string };
 
 export default function OnboardingPage() {
-  const [githubUrl, setGithubUrl] = useState("");
+  const [githubUrl, setGithubUrl]     = useState("");
   const [portfolioUrl, setPortfolioUrl] = useState("");
-  const [cvMetadata, setCvMetadata] = useState("");
-  const [state, setState] = useState<SaveState>({ status: "idle" });
+  const [cvMetadata, setCvMetadata]   = useState("");
+  const [state, setState]             = useState<SaveState>({ status: "idle" });
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setState({ status: "saving" });
-
     const response = await fetch("/api/profile", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        githubUrl,
-        portfolioUrl,
-        cvMetadata: cvMetadata || undefined,
-      }),
+      body: JSON.stringify({ githubUrl, portfolioUrl, cvMetadata: cvMetadata || undefined }),
     });
-
     const payload = await response.json();
-
     if (!response.ok) {
-      setState({
-        status: "error",
-        message: payload?.error?.message ?? "Unable to save profile.",
-      });
-      return;
+      setState({ status: "error", message: payload?.error?.message ?? "Unable to save profile." }); return;
     }
-
     setState({ status: "saved", message: "Profile saved." });
   }
 
   return (
-    <main className="site-shell" style={{ maxWidth: 720, margin: "0 auto", padding: "2rem 1rem" }}>
-      <section className="panel" style={{ padding: "1.25rem" }}>
-        <h1>Onboarding</h1>
-        <p>Add profile metadata for challenge participation.</p>
+    <motion.main className="site-shell" style={{ maxWidth: 600 }} {...pageIn}>
 
-        <form onSubmit={handleSubmit} style={{ display: "grid", gap: "0.75rem", marginTop: "1rem" }}>
+      <div className="page-header" style={{ paddingBottom: "1.25rem" }}>
+        <div className="page-header-meta">
+          <h1>Profile Setup</h1>
+          <p style={{ marginTop: "0.3rem" }}>Add your details for challenge participation.</p>
+        </div>
+      </div>
+
+      <motion.div className="panel" style={{ padding: "1.75rem" }} variants={fadeIn} initial="hidden" animate="show">
+        <form onSubmit={(e) => void handleSubmit(e)} style={{ display: "grid", gap: "1rem" }}>
           <label>
-            GitHub URL
-            <input value={githubUrl} onChange={(event) => setGithubUrl(event.target.value)} required type="url" />
+            GitHub Profile URL
+            <input value={githubUrl} onChange={(e) => setGithubUrl(e.target.value)} required type="url" placeholder="https://github.com/your-handle" />
           </label>
           <label>
             Portfolio URL
-            <input value={portfolioUrl} onChange={(event) => setPortfolioUrl(event.target.value)} required type="url" />
+            <input value={portfolioUrl} onChange={(e) => setPortfolioUrl(e.target.value)} required type="url" placeholder="https://your-portfolio.com" />
           </label>
           <label>
-            CV metadata (optional)
-            <input value={cvMetadata} onChange={(event) => setCvMetadata(event.target.value)} maxLength={250} />
+            CV / Bio <span style={{ fontWeight: 400, color: "var(--ink-3)" }}>(optional · max 250 chars)</span>
+            <input value={cvMetadata} onChange={(e) => setCvMetadata(e.target.value)} maxLength={250} placeholder="Short bio or relevant background…" />
           </label>
 
-          <button className="btn btn-primary" type="submit" disabled={state.status === "saving"}>
-            {state.status === "saving" ? "Saving..." : "Save Profile"}
-          </button>
-        </form>
+          <AnimatePresence mode="wait">
+            {state.status === "error" ? (
+              <motion.p key="err" className="error-text" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+                {state.message}
+              </motion.p>
+            ) : state.status === "saved" ? (
+              <motion.p key="ok" className="success-text" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+                {state.message}
+              </motion.p>
+            ) : null}
+          </AnimatePresence>
 
-        {state.status === "error" ? <p style={{ color: "#f87171" }}>{state.message}</p> : null}
-        {state.status === "saved" ? <p style={{ color: "#4ade80" }}>{state.message}</p> : null}
-      </section>
-    </main>
+          <motion.button {...btnTap} className="btn btn-primary" type="submit" disabled={state.status === "saving"}>
+            {state.status === "saving" ? "Saving…" : "Save Profile"}
+          </motion.button>
+        </form>
+      </motion.div>
+
+    </motion.main>
   );
 }

@@ -22,10 +22,21 @@ export async function GET(
 
     const report = db.reports.find((entry) => entry.submission_id === id) ?? null;
 
+    // Extract visual artifacts from evidence so the review UI can display them
+    const screenshotBase64 = report?.evidence?.screenshot_base64 ?? null;
+    const previewUrl = report?.evidence?.preview_url ?? null;
+
     return NextResponse.json(
       ok({
         submission,
-        report,
+        report: report
+          ? {
+            evaluator_report: report.evaluator_report,
+            builder_report: report.builder_report,
+          }
+          : null,
+        screenshot_base64: screenshotBase64,
+        preview_url: previewUrl,
       }),
     );
   } catch (error) {
@@ -36,3 +47,4 @@ export async function GET(
     );
   }
 }
+

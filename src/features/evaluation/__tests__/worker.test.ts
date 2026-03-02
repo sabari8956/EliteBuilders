@@ -144,7 +144,7 @@ describe("epic3 worker with course-corrected graph", () => {
     vi.clearAllMocks();
   });
 
-  it("processes a queued job and persists ai_scored + report", async () => {
+  it("processes a submission immediately and persists ai_scored + report", async () => {
     const teardown = await setupIsolatedDb();
 
     try {
@@ -176,21 +176,19 @@ describe("epic3 worker with course-corrected graph", () => {
         artifacts: undefined,
       });
 
-      const { runWorkerOnce } = await import("@/features/evaluation/worker");
+      const { evaluateSubmission } = await import("@/features/evaluation/worker");
       const { getDatabase } = await import("@/features/evaluation/store");
 
-      const result = await runWorkerOnce();
+      const result = await evaluateSubmission("submission-demo-001");
       expect(result.status).toBe("processed");
       expect(result.submission_id).toBe("submission-demo-001");
       expect(result.ai_score).toBeTypeOf("number");
 
       const db = await getDatabase();
       const submission = db.submissions.find((item) => item.id === "submission-demo-001");
-      const job = db.eval_jobs.find((item) => item.id === "job-demo-001");
 
       expect(submission?.state).toBe("awaiting_human_review");
       expect(submission?.ai_score).not.toBeNull();
-      expect(job?.status).toBe("completed");
       expect(db.reports.length).toBe(1);
       expect(db.reports[0]?.evidence.runtime_path).toBe("backend/api");
     } finally {
@@ -198,28 +196,23 @@ describe("epic3 worker with course-corrected graph", () => {
     }
   });
 
-  it("requeues job when graph setup fails", async () => {
+  it("fails submission when graph setup fails", async () => {
     const teardown = await setupIsolatedDb();
 
     try {
       createMock.mockRejectedValue(new Error("daytona unavailable"));
 
-      const { runWorkerOnce } = await import("@/features/evaluation/worker");
+      const { evaluateSubmission } = await import("@/features/evaluation/worker");
       const { getDatabase } = await import("@/features/evaluation/store");
 
-      const result = await runWorkerOnce();
-      expect(result.status).toBe("processed");
+      const result = await evaluateSubmission("submission-demo-001");
+      expect(result.status).toBe("error");
       expect(result.message).toContain("daytona unavailable");
 
       const db = await getDatabase();
       const submission = db.submissions.find((item) => item.id === "submission-demo-001");
-      const job = db.eval_jobs.find((item) => item.id === "job-demo-001");
 
-      expect(submission?.state).toBe("queued");
-      expect(job?.status).toBe("queued");
-      expect(job?.attempt).toBe(1);
-      expect(job?.last_error).toContain("daytona unavailable");
-      expect(job?.next_retry_at).not.toBeNull();
+      expect(submission?.state).toBe("failed");
     } finally {
       await teardown();
     }

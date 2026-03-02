@@ -1,11 +1,9 @@
-import { randomUUID } from "node:crypto";
 import { runCourseCorrectedEvaluation } from "@/features/evaluation/langgraph-evaluator";
 import { transitionSubmission } from "@/features/evaluation/state-machine";
 import { getDatabase, upsertReport, withDatabase } from "@/features/evaluation/store";
-import type { DemoDatabase, EvalJob, Submission } from "@/features/evaluation/types";
-
-const leaseMs = 60_000;
-const leaseRenewalMs = 30_000;
+import type { DemoDatabase, Submission, SubmissionState } from "@/features/evaluation/types";
+import { getSupabaseServerClient, isSupabaseConfigured } from "@/features/platform/supabase";
+import { getStore } from "@/features/platform/store";
 
 /**
  * At most EPIC3_MAX_CONCURRENT evaluations run simultaneously.
@@ -14,24 +12,38 @@ const leaseRenewalMs = 30_000;
 const maxConcurrent = Number(process.env.EPIC3_MAX_CONCURRENT ?? "3");
 let activeEvaluations = 0;
 
-function isJobLeasable(job: EvalJob, now: number): boolean {
-  if (job.status === "queued") {
-    if (!job.next_retry_at) {
-      return true;
+/**
+ * Sync the Epic3 submission state back to the platform status column
+ * (Supabase or in-memory store) so the builder's detail page chip
+ * reflects live evaluation progress without a separate sync job.
+ */
+async function syncPlatformStatus(submissionId: string, state: SubmissionState): Promise<void> {
+  const now = new Date().toISOString();
+
+  if (isSupabaseConfigured()) {
+    try {
+      const supabase = getSupabaseServerClient();
+      await supabase
+        .from("submissions")
+        .update({ status: state, updated_at: now })
+        .eq("id", submissionId);
+    } catch (err) {
+      console.warn("[EVALUATOR] syncPlatformStatus (supabase) failed:", err);
     }
-
-    return Date.parse(job.next_retry_at) <= now;
+    return;
   }
 
-  if (job.status !== "leased") {
-    return false;
+  // Local in-memory platform store fallback
+  try {
+    const store = getStore();
+    const sub = store.submissions.get(submissionId);
+    if (sub) {
+      sub.status = state as never; // SubmissionStatus mirrors SubmissionState
+      sub.updatedAt = now;
+    }
+  } catch (err) {
+    console.warn("[EVALUATOR] syncPlatformStatus (local) failed:", err);
   }
-
-  if (!job.lease_expires_at) {
-    return true;
-  }
-
-  return Date.parse(job.lease_expires_at) <= now;
 }
 
 function findSubmission(db: DemoDatabase, submissionId: string): Submission {
@@ -43,106 +55,64 @@ function findSubmission(db: DemoDatabase, submissionId: string): Submission {
   return submission;
 }
 
-function leaseJob(db: DemoDatabase, nowIso: string): EvalJob | null {
-  const now = Date.parse(nowIso);
-  const job = db.eval_jobs
-    .filter((candidate) => isJobLeasable(candidate, now))
-    .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))[0];
-
-  if (!job) {
-    return null;
-  }
-
-  job.status = "leased";
-  job.attempt += 1;
-  job.lease_token = `lease-${randomUUID()}`;
-  job.lease_expires_at = new Date(now + leaseMs).toISOString();
-  job.updated_at = nowIso;
-
-  return job;
-}
-
-function toQueuedWithRetry(job: EvalJob, nowIso: string, error: string) {
-  const backoffMs = Math.min(30_000, job.attempt * 5_000);
-  job.status = "queued";
-  job.last_error = error;
-  job.next_retry_at = new Date(Date.parse(nowIso) + backoffMs).toISOString();
-  job.lease_token = null;
-  job.lease_expires_at = null;
-  job.updated_at = nowIso;
-}
-
-function completeJob(job: EvalJob, nowIso: string) {
-  job.status = "completed";
-  job.last_error = null;
-  job.next_retry_at = null;
-  job.lease_token = null;
-  job.lease_expires_at = null;
-  job.updated_at = nowIso;
-}
-
-function failJob(job: EvalJob, nowIso: string, error: string) {
-  job.status = "failed";
-  job.last_error = error;
-  job.next_retry_at = null;
-  job.lease_token = null;
-  job.lease_expires_at = null;
-  job.updated_at = nowIso;
-}
-
-export type RunOnceResult = {
-  status: "processed" | "idle";
-  submission_id?: string;
-  job_id?: string;
+export type EvalResult = {
+  status: "processed" | "error" | "busy";
+  submission_id: string;
   ai_score?: number;
   message: string;
 };
 
-export async function runWorkerOnce(): Promise<RunOnceResult> {
-  // Reject the poll immediately if concurrency cap is reached.
+/**
+ * Starts an immediate evaluation for a specific submission.
+ * Bypasses any queuing system and starts processing right away.
+ */
+export async function evaluateSubmission(submissionId: string): Promise<EvalResult> {
+  // Reject if concurrency cap is reached.
   if (activeEvaluations >= maxConcurrent) {
+    console.log(`[EVALUATOR] Concurrency cap reached. Cannot evaluate ${submissionId} immediately.`);
     return {
-      status: "idle",
-      message: `Concurrency cap reached (${activeEvaluations}/${maxConcurrent} active). Skipping poll.`,
+      status: "busy",
+      submission_id: submissionId,
+      message: `Concurrency cap reached (${activeEvaluations}/${maxConcurrent} active). Submission ${submissionId} will not be processed immediately.`,
     };
   }
 
+  console.log(`[EVALUATOR] Starting automatic evaluation for ${submissionId} (${activeEvaluations + 1}/${maxConcurrent} active)`);
   activeEvaluations++;
   try {
     return await withDatabase(async (db) => {
       const nowIso = new Date().toISOString();
-      const job = leaseJob(db, nowIso);
-
-      if (!job) {
+      let submission: Submission;
+      try {
+        submission = findSubmission(db, submissionId);
+      } catch (err) {
         return {
-          status: "idle",
-          message: "No leasable evaluation job available.",
+          status: "error",
+          submission_id: submissionId,
+          message: err instanceof Error ? err.message : "Unknown error",
         };
       }
 
-      const submission = findSubmission(db, job.submission_id);
-
-      // Extend the lease every leaseRenewalMs while the evaluation runs.
-      // This mutates the in-memory job object; withDatabase serialises the
-      // final state to disk once runCourseCorrectedEvaluation completes.
-      const renewalInterval = setInterval(() => {
-        const renewedAt = new Date().toISOString();
-        job.lease_expires_at = new Date(Date.now() + leaseMs).toISOString();
-        job.updated_at = renewedAt;
-      }, leaseRenewalMs);
-
       try {
-        if (submission.state === "queued") {
+        if (submission.state === "queued" || submission.state === "submitted") {
           transitionSubmission(
             submission,
             "running",
-            `Leased by worker ${job.lease_token}. Attempt ${job.attempt}.`,
+            "Starting autonomous evaluation immediately.",
             nowIso,
           );
-        } else if (submission.state !== "running") {
-          throw new Error(
-            `Submission ${submission.id} must be queued/running for processing. Found ${submission.state}.`,
-          );
+          // Sync "running" state back to platform immediately
+          void syncPlatformStatus(submission.id, "running");
+        } else if (submission.state === "running") {
+          // Already running, maybe another request triggered it?
+          return {
+            status: "processed",
+            submission_id: submissionId,
+            message: "Submission is already being evaluated.",
+          };
+        } else {
+          // If it's failed, we might want to allow re-running, but the user said "automatically start" 
+          // which implies the first-time flow.
         }
 
         const challenge = db.challenges.find(
@@ -171,44 +141,34 @@ export async function runWorkerOnce(): Promise<RunOnceResult> {
           "AI report generated and waiting for evaluator review.",
         );
 
-        completeJob(job, new Date().toISOString());
+        // Sync final pre-human state back to platform
+        void syncPlatformStatus(submission.id, "awaiting_human_review");
+
+        console.log(`[EVALUATOR] Completed AI evaluation for ${submissionId} with score ${runResult.evidence.aggregate_score}`);
 
         return {
           status: "processed",
           submission_id: submission.id,
-          job_id: job.id,
           ai_score: runResult.evidence.aggregate_score,
           message: "Submission evaluated successfully.",
         };
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : "Unknown worker error";
+        const errorMessage = error instanceof Error ? error.message : "Unknown evaluation error";
 
-        if (job.attempt < job.max_attempts) {
-          toQueuedWithRetry(job, new Date().toISOString(), errorMessage);
-          transitionSubmission(
-            submission,
-            "queued",
-            `Evaluation failed on attempt ${job.attempt}. Queued for retry: ${errorMessage}`,
-          );
-        } else {
-          failJob(job, new Date().toISOString(), errorMessage);
-          if (submission.state !== "failed") {
-            transitionSubmission(
-              submission,
-              "failed",
-              `Evaluation failed after ${job.attempt} attempts: ${errorMessage}`,
-            );
-          }
-        }
+        transitionSubmission(
+          submission,
+          "failed",
+          `Evaluation failed: ${errorMessage}`,
+        );
+        void syncPlatformStatus(submission.id, "failed");
+
+        console.error(`[EVALUATOR] Evaluation failed for ${submissionId}:`, error);
 
         return {
-          status: "processed",
+          status: "error",
           submission_id: submission.id,
-          job_id: job.id,
           message: errorMessage,
         };
-      } finally {
-        clearInterval(renewalInterval);
       }
     });
   } finally {
@@ -221,7 +181,8 @@ export async function getWorkerSnapshot() {
 
   return {
     runtime_mode: "daytona" as const,
-    jobs: db.eval_jobs,
+    active_evaluations: activeEvaluations,
+    concurrency_limit: maxConcurrent,
     submissions: db.submissions.map((submission) => ({
       id: submission.id,
       state: submission.state,

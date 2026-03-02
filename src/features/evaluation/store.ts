@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import {
   type DemoDatabase,
   type EvaluationReport,
+  type RubricCriterion,
   type Submission,
   type SubmissionState,
 } from "@/features/evaluation/types";
@@ -94,21 +95,6 @@ function seedDatabase(): DemoDatabase {
       },
     ],
     submissions: [submission],
-    eval_jobs: [
-      {
-        id: jobId,
-        submission_id: submissionId,
-        status: "queued",
-        attempt: 0,
-        max_attempts: 3,
-        lease_token: null,
-        lease_expires_at: null,
-        last_error: null,
-        next_retry_at: null,
-        created_at: createdAt,
-        updated_at: createdAt,
-      },
-    ],
     reports: [],
   };
 }
@@ -163,6 +149,76 @@ export function pushTimeline(
   submission.state = state;
   submission.updated_at = at;
   submission.timeline.push({ state, at, message });
+}
+
+/** Convert a flat platform rubric (e.g. { innovation: 40, quality: 60 }) to Epic3 criteria. */
+function convertPlatformRubric(rubric: Record<string, unknown>): RubricCriterion[] {
+  const entries = Object.entries(rubric).filter(([, v]) => typeof v === "number" && (v as number) > 0);
+  if (entries.length === 0) {
+    return [{ id: "overall", title: "Overall Quality", description: "Overall project quality and implementation", weight: 1, max_score: 100, keywords: [] }];
+  }
+  const total = entries.reduce((s, [, v]) => s + (v as number), 0);
+  return entries.map(([key, value]) => ({
+    id: key,
+    title: key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+    description: `Evaluation of ${key.replace(/_/g, " ")}`,
+    weight: (value as number) / total,
+    max_score: 100,
+    keywords: [key],
+  }));
+}
+
+/**
+ * Bridge: called after a platform submission is created to register it in the
+ * Epic3 evaluation pipeline. Idempotent — safe to call multiple times.
+ */
+export async function queueSubmissionForEvaluation(params: {
+  submissionId: string;
+  challengeId: string;
+  challengeTitle: string;
+  challengeRubric: Record<string, unknown>;
+  builderId: string;
+  repoUrl: string;
+}): Promise<void> {
+  await withDatabase((db) => {
+    const now = nowIso();
+    const criteria = convertPlatformRubric(params.challengeRubric);
+
+    // Upsert challenge so the worker can find the rubric
+    const cidx = db.challenges.findIndex((c) => c.id === params.challengeId);
+    const epic3Challenge = { id: params.challengeId, title: params.challengeTitle, rubric: criteria, created_at: now, ai_weight: 0.8 as const };
+    if (cidx >= 0) db.challenges[cidx] = epic3Challenge;
+    else db.challenges.push(epic3Challenge);
+
+    // Idempotent — bail out if already registered
+    if (db.submissions.some((s) => s.id === params.submissionId)) return;
+
+    const submission: Submission = {
+      id: params.submissionId,
+      challenge_id: params.challengeId,
+      builder_id: params.builderId,
+      repo_url: params.repoUrl,
+      repo_branch: null,
+      rubric_id: params.challengeId,
+      snapshot_ref: params.repoUrl,
+      snapshot_context: `Submission for challenge: ${params.challengeTitle}`,
+      state: "queued",
+      created_at: now,
+      updated_at: now,
+      ai_score: null,
+      human_score: null,
+      final_score: null,
+      ai_evidence_id: null,
+      finalized_at: null,
+      finalized_by: null,
+      finalization_notes: null,
+      timeline: [
+        { state: "submitted", at: now, message: "Submission received from builder." },
+        { state: "queued", at: now, message: "Queued for autonomous AI evaluation." },
+      ],
+    };
+    db.submissions.push(submission);
+  });
 }
 
 export function upsertReport(db: DemoDatabase, report: EvaluationReport) {

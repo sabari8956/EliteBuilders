@@ -1,37 +1,23 @@
 "use client";
 
+import Link from "next/link";
+import { motion, AnimatePresence } from "framer-motion";
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import { btnTap, fadeIn, pageIn, slideUp } from "../../../components/animations";
 
-type ApiEnvelope<T> = {
-  data: T | null;
-  error: { code: string; message: string; details?: unknown } | null;
-};
-
+type ApiEnvelope<T> = { data: T | null; error: { code: string; message: string; details?: unknown } | null };
 type SubmissionPayload = {
-  submission: {
-    id: string;
-    state: string;
-    ai_score: number | null;
-    final_score: number | null;
-    human_score: number | null;
-    finalized_at: string | null;
-    finalization_notes: string | null;
-  };
-  report: {
-    evaluator_report: string;
-    builder_report: string;
-  } | null;
+  submission: { id: string; state: string; ai_score: number | null; final_score: number | null; human_score: number | null; finalized_at: string | null; finalization_notes: string | null };
+  report: { evaluator_report: string; builder_report: string } | null;
+  screenshot_base64: string | null;
+  preview_url: string | null;
 };
 
-export default function Epic3ReviewPage({
-  params,
-}: {
-  params: Promise<{ submissionId: string }>;
-}) {
-  const [submissionId, setSubmissionId] = useState<string>("submission-demo-001");
+export default function Epic3ReviewPage({ params }: { params: Promise<{ submissionId: string }> }) {
+  const [submissionId, setSubmissionId] = useState("submission-demo-001");
   const [payload, setPayload] = useState<SubmissionPayload | null>(null);
-  const [humanScore, setHumanScore] = useState<number>(85);
-  const [notes, setNotes] = useState<string>("Solid implementation with clear guardrails.");
+  const [humanScore, setHumanScore] = useState(85);
+  const [notes, setNotes] = useState("Solid implementation with clear guardrails.");
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
 
@@ -39,108 +25,149 @@ export default function Epic3ReviewPage({
     setError(null);
     const response = await fetch(`/api/epic3/submissions/${id}`);
     const json = (await response.json()) as ApiEnvelope<SubmissionPayload>;
-
-    if (json.error || !json.data) {
-      setError(json.error?.message ?? "Failed to load submission.");
-      return;
-    }
-
+    if (json.error || !json.data) { setError(json.error?.message ?? "Failed to load submission."); return; }
     setPayload(json.data);
   }, []);
 
   useEffect(() => {
-    params.then((value) => {
-      setSubmissionId(value.submissionId);
-      void load(value.submissionId);
-    });
+    params.then((v) => { setSubmissionId(v.submissionId); void load(v.submissionId); });
   }, [params, load]);
 
   async function submitFinalization(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError(null);
-    setStatus("Submitting final score...");
-
-    const response = await fetch(`/api/epic3/submissions/${submissionId}/finalize`, {
+    event.preventDefault(); setError(null); setStatus("Submitting…");
+    const response = await fetch(`/api/submissions/${submissionId}/finalize`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        evaluator_id: "evaluator-demo",
-        human_score: humanScore,
-        notes,
-      }),
+      body: JSON.stringify({ human_score: humanScore, notes }),
     });
-
-    const json = (await response.json()) as ApiEnvelope<{ submission: unknown }>;
-
-    if (json.error) {
-      setError(json.error.message);
-      setStatus(null);
-      return;
-    }
-
-    setStatus("Finalization saved.");
+    const json = (await response.json()) as ApiEnvelope<{ finalScore: number }>;
+    if (json.error) { setError(json.error.message); setStatus(null); return; }
+    setStatus(`Finalized. Final score: ${json.data?.finalScore ?? "—"}`);
     await load(submissionId);
   }
 
   return (
-    <main className="site-shell">
-      <section className="panel hero">
-        <div className="tagline">Epic 3 Review</div>
-        <h1>Evaluator Finalization Console</h1>
-        <p>
-          Review AI report, submit human score, and finalize using the strict
-          80/20 formula.
-        </p>
+    <motion.main className="site-shell" {...pageIn}>
 
-        {payload ? (
-          <div className="panel" style={{ padding: "1rem", display: "grid", gap: "0.7rem" }}>
-            <strong>Submission: {payload.submission.id}</strong>
-            <span>State: {payload.submission.state}</span>
-            <span>AI Score: {payload.submission.ai_score ?? "n/a"}</span>
-            <span>Human Score: {payload.submission.human_score ?? "n/a"}</span>
-            <span>Final Score: {payload.submission.final_score ?? "n/a"}</span>
+      <div className="page-header">
+        <div className="page-header-meta">
+          <span className="tagline" style={{ marginBottom: "0.6rem" }}>Epic 3 Review</span>
+          <h1>Finalization Console</h1>
+          <p style={{ marginTop: "0.3rem" }}>Review AI report, enter human score, finalize with 80/20 weighting.</p>
+        </div>
+        <motion.div {...btnTap} style={{ alignSelf: "center" }}>
+          <Link className="btn btn-ghost" href="/evaluator" style={{ fontSize: "0.8rem", padding: "0.45rem 0.9rem" }}>
+            ← Queue
+          </Link>
+        </motion.div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: "1.25rem", alignItems: "start" }}>
+
+        {/* Score summary */}
+        <div style={{ display: "grid", gap: "1.25rem" }}>
+          {payload ? (
+            <motion.div
+              style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "1px", background: "rgba(0,0,0,0.08)", borderRadius: 14, overflow: "hidden" }}
+              variants={fadeIn} initial="hidden" animate="show"
+            >
+              {[
+                { label: "AI Score", value: payload.submission.ai_score ?? "—" },
+                { label: "Human Score", value: payload.submission.human_score ?? "—" },
+                { label: "Final Score", value: payload.submission.final_score ?? "—" },
+              ].map((s) => (
+                <div key={s.label} className="panel" style={{ padding: "1.25rem", borderRadius: 0, textAlign: "center" }}>
+                  <p className="stat-number">{s.value}</p>
+                  <p className="stat-label">{s.label}</p>
+                </div>
+              ))}
+            </motion.div>
+          ) : null}
+
+          {payload?.report ? (
+            <motion.div className="panel" style={{ padding: "1.75rem", display: "grid", gap: "0.85rem" }} variants={slideUp} initial="hidden" animate="show">
+              <p style={{ fontFamily: "var(--font-mono)", fontSize: "0.68rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--ink-3)" }}>
+                AI Evaluator Report
+              </p>
+              <pre style={{ fontSize: "0.78rem" }}>{payload.report.evaluator_report}</pre>
+              <hr className="divider" />
+              <p style={{ fontFamily: "var(--font-mono)", fontSize: "0.68rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--ink-3)" }}>
+                Builder Report (Redacted)
+              </p>
+              <pre style={{ fontSize: "0.78rem" }}>{payload.report.builder_report}</pre>
+            </motion.div>
+          ) : null}
+
+          {/* Runtime screenshot + preview URL */}
+          {(payload?.screenshot_base64 || payload?.preview_url) ? (
+            <motion.div className="panel" style={{ padding: "1.75rem", display: "grid", gap: "1rem" }} variants={slideUp} initial="hidden" animate="show">
+              <p style={{ fontFamily: "var(--font-mono)", fontSize: "0.68rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--ink-3)" }}>
+                Runtime Artifacts
+              </p>
+              {payload.preview_url ? (
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <span style={{ fontSize: "0.8rem", color: "var(--ink-3)" }}>Preview URL:</span>
+                  <a
+                    href={payload.preview_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ fontSize: "0.8rem", color: "var(--c-purple)", wordBreak: "break-all" }}
+                  >
+                    {payload.preview_url}
+                  </a>
+                </div>
+              ) : null}
+              {payload.screenshot_base64 ? (
+                <div style={{ display: "grid", gap: "0.5rem" }}>
+                  <p style={{ fontSize: "0.78rem", color: "var(--ink-3)" }}>App Screenshot (captured during evaluation):</p>
+                  <img
+                    src={`data:image/jpeg;base64,${payload.screenshot_base64}`}
+                    alt="Runtime screenshot captured by evaluation agent"
+                    style={{
+                      width: "100%",
+                      maxWidth: 720,
+                      borderRadius: 10,
+                      border: "1px solid rgba(255,255,255,0.08)",
+                      objectFit: "contain",
+                      background: "#000",
+                    }}
+                  />
+                </div>
+              ) : null}
+            </motion.div>
+          ) : null}
+        </div>
+
+        {/* Finalization form */}
+        <motion.div className="panel" style={{ padding: "1.5rem", display: "grid", gap: "1rem" }} variants={fadeIn} initial="hidden" animate="show">
+          <div>
+            <p style={{ fontFamily: "var(--font-mono)", fontSize: "0.68rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--ink-3)", marginBottom: "0.3rem" }}>
+              Submission
+            </p>
+            <code style={{ fontSize: "0.78rem" }}>{submissionId}</code>
+            {payload ? <><br /><span className={`chip ${payload.submission.finalized_at ? "chip-success" : "chip-warning"}`} style={{ marginTop: "0.5rem" }}>{payload.submission.state}</span></> : null}
           </div>
-        ) : null}
+          <hr className="divider" />
+          <form onSubmit={(e) => void submitFinalization(e)} style={{ display: "grid", gap: "0.85rem" }}>
+            <label>
+              Human Score (0–100)
+              <input type="number" min={0} max={100} value={humanScore} onChange={(e) => setHumanScore(Number(e.target.value))} />
+            </label>
+            <label>
+              Notes
+              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={4} />
+            </label>
 
-        <form onSubmit={submitFinalization} className="panel" style={{ padding: "1rem", display: "grid", gap: "0.7rem" }}>
-          <label>
-            Human score (0-100)
-            <input
-              type="number"
-              min={0}
-              max={100}
-              value={humanScore}
-              onChange={(event) => setHumanScore(Number(event.target.value))}
-              style={{ width: "100%", marginTop: "0.4rem", padding: "0.45rem" }}
-            />
-          </label>
-          <label>
-            Finalization notes
-            <textarea
-              value={notes}
-              onChange={(event) => setNotes(event.target.value)}
-              rows={4}
-              style={{ width: "100%", marginTop: "0.4rem", padding: "0.45rem" }}
-            />
-          </label>
+            <AnimatePresence>
+              {status ? <motion.p key="s" variants={fadeIn} initial="hidden" animate="show" exit="hidden" style={{ fontSize: "0.82rem", color: "var(--ink-3)" }}>{status}</motion.p> : null}
+              {error ? <motion.p key="e" variants={fadeIn} initial="hidden" animate="show" exit="hidden" className="error-text">{error}</motion.p> : null}
+            </AnimatePresence>
 
-          <button className="btn btn-primary" type="submit">
-            Finalize Submission
-          </button>
-        </form>
+            <motion.button {...btnTap} className="btn btn-primary" type="submit">Finalize Submission</motion.button>
+          </form>
+        </motion.div>
 
-        {status ? <p>{status}</p> : null}
-        {error ? <p style={{ color: "#7f1d1d", fontWeight: 700 }}>Error: {error}</p> : null}
-      </section>
-
-      {payload?.report ? (
-        <section className="panel" style={{ padding: "1.5rem", display: "grid", gap: "0.8rem" }}>
-          <h2>Evaluator Report</h2>
-          <pre style={{ whiteSpace: "pre-wrap" }}>{payload.report.evaluator_report}</pre>
-          <h2>Builder Report (Redacted)</h2>
-          <pre style={{ whiteSpace: "pre-wrap" }}>{payload.report.builder_report}</pre>
-        </section>
-      ) : null}
-    </main>
+      </div>
+    </motion.main>
   );
 }

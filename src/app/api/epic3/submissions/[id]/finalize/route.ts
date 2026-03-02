@@ -3,11 +3,11 @@ import { z } from "zod";
 import { finalizeSubmission } from "@/features/evaluation/finalization";
 import { withDatabase } from "@/features/evaluation/store";
 import { fail, ok } from "@/lib/api-envelope";
+import { requireAuth } from "@/features/auth/authorization";
 
 type Params = { id: string };
 
 const finalizeSchema = z.object({
-  evaluator_id: z.string().min(1),
   human_score: z.number().min(0).max(100),
   notes: z.string().min(1).max(2000),
 });
@@ -16,6 +16,11 @@ export async function POST(
   request: Request,
   context: { params: Promise<Params> },
 ) {
+  const auth = await requireAuth(["evaluator", "admin"], "/api/epic3/submissions/:id/finalize");
+  if ("response" in auth) {
+    return NextResponse.json(auth.response, { status: auth.status });
+  }
+
   try {
     const { id } = await context.params;
     const payload = finalizeSchema.parse(await request.json());
@@ -28,7 +33,7 @@ export async function POST(
 
       return finalizeSubmission(
         submission,
-        payload.evaluator_id,
+        auth.user.id,
         payload.human_score,
         payload.notes,
       );

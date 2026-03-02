@@ -67,22 +67,6 @@ export type Submission = {
   timeline: SubmissionTimelineEntry[];
 };
 
-export type EvalJobStatus = "queued" | "leased" | "completed" | "failed";
-
-export type EvalJob = {
-  id: string;
-  submission_id: string;
-  status: EvalJobStatus;
-  attempt: number;
-  max_attempts: number;
-  lease_token: string | null;
-  lease_expires_at: string | null;
-  last_error: string | null;
-  next_retry_at: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
 export type EvaluationCriterionEvidence = {
   criterion_id: string;
   criterion_title: string;
@@ -148,6 +132,10 @@ export type EvaluationEvidence = {
   phase_results?: EvaluationPhaseResult[];
   runtime_artifacts?: string[];
   runtime?: RuntimeExecutionSummary;
+  /** Base64-encoded JPEG captured by take_screenshot during runtime evaluation. */
+  screenshot_base64?: string | null;
+  /** Public preview URL for the running app (e.g. Daytona getPreviewLink output). */
+  preview_url?: string | null;
 };
 
 export type EvaluationReport = {
@@ -162,7 +150,6 @@ export type EvaluationReport = {
 export type DemoDatabase = {
   challenges: Challenge[];
   submissions: Submission[];
-  eval_jobs: EvalJob[];
   reports: EvaluationReport[];
 };
 
